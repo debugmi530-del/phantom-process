@@ -1,0 +1,119 @@
+name: 🎮 Build Android APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build PHANTOM PROCESS APK
+    runs-on: ubuntu-latest
+
+    steps:
+      # ── 1. Checkout ──────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          lfs: false
+
+      # ── 2. Java 17 (required by Android SDK) ─────────────────
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # ── 3. Android SDK ────────────────────────────────────────
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android build tools & NDK
+        run: |
+          sdkmanager --install \
+            "platform-tools" \
+            "platforms;android-34" \
+            "build-tools;34.0.0" \
+            "ndk;23.2.8568313" \
+            2>&1 | tail -5
+
+      # ── 4. Godot 4 ────────────────────────────────────────────
+      - name: Set up Godot 4.3
+        uses: chickensoft-games/setup-godot@v2
+        with:
+          version: 4.3.0
+          use-dotnet: false
+          include-templates: true
+
+      # ── 5. Decode Keystore ────────────────────────────────────
+      - name: Decode release keystore
+        run: |
+          mkdir -p android/keystores
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > android/keystores/release.keystore
+          echo "Keystore decoded: $(du -sh android/keystores/release.keystore)"
+
+      # ── 6. Patch export_presets.cfg with absolute keystore path
+      - name: Patch keystore path in export_presets.cfg
+        run: |
+          KSFILE="$(pwd)/android/keystores/release.keystore"
+          sed -i "s|KEYSTORE_PATH|${KSFILE}|g" export_presets.cfg
+          echo "Keystore path set to: $KSFILE"
+
+      # ── 7. Configure Godot editor settings (Android SDK path) ─
+      - name: Configure Godot Android SDK path
+        run: |
+          mkdir -p "$HOME/.config/godot"
+          cat > "$HOME/.config/godot/editor_settings-4.tres" << EOF
+          [gd_resource type="EditorSettings" format=3]
+          [resource]
+          export/android/android_sdk_path = "$ANDROID_HOME"
+          export/android/debug_keystore = ""
+          export/android/debug_keystore_user = "androiddebugkey"
+          export/android/debug_keystore_pass = "android"
+          EOF
+
+      # ── 8. Import / prepare project ───────────────────────────
+      - name: Import Godot project (headless)
+        run: |
+          timeout 60 godot4 --headless --editor --quit 2>&1 || true
+          echo "Import step complete"
+
+      # ── 9. Build APK ─────────────────────────────────────────
+      - name: Export Release APK
+        run: |
+          mkdir -p builds/android
+          godot4 --headless \
+            --export-release "Android" \
+            "$(pwd)/builds/android/phantom_process.apk" \
+            2>&1
+          echo "Build result: $(ls -lh builds/android/ 2>/dev/null || echo 'No APK found')"
+
+      # ── 10. Upload APK artifact ────────────────────────────────
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: phantom-process-apk-v${{ github.run_number }}
+          path: builds/android/phantom_process.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      # ── 11. Create GitHub Release ─────────────────────────────
+      - name: Create GitHub Release
+        uses: ncipollo/release-action@v1
+        with:
+          artifacts: builds/android/phantom_process.apk
+          tag: v${{ github.run_number }}
+          name: "PHANTOM PROCESS v${{ github.run_number }}"
+          body: |
+            ## 👾 PHANTOM PROCESS v${{ github.run_number }}
+
+            Автоматическая сборка. Установка:
+            1. Скачай `phantom_process.apk`
+            2. Включи "Установка из неизвестных источников" в настройках Android
+            3. Открой APK и установи
+
+            ---
+            *Он знает о тебе больше, чем ты думаешь.*
+          token: ${{ secrets.GITHUB_TOKEN }}
+          allowUpdates: true
+          makeLatest: true
