@@ -1,0 +1,17 @@
+# Godot 4 specific ignores
+.godot/
+android/build/
+builds/
+*.translation
+export_credentials.cfg
+
+# Keystore — never commit real keystores
+android/keystores/release.keystore
+android/keystores/debug.keystore
+*.p12
+*.jks
+
+# OS
+.DS_Store
+Thumbs.db
+*.tmp
